@@ -794,37 +794,42 @@ PAGE = r"""<!doctype html>
 
 <section class="about hidden" id="about-web">
  <img src="/icon-512.png" alt="">
- <h2>About Redogtor (Web Version)</h2>
- <p>Redogtor is a free tool I built, with help from a Large Language Model (LLM),
-  to help you safely black out private information in documents. It uses smart
+ <h2>Use this site to try it. Then run it on your own computer.</h2>
+ <p>This website is a demonstration. It lets you see what the tool does before
+  you install anything. For any document that actually matters, download
+  Redogtor and run it on your own machine instead.</p>
+ <p>Not because I think this site is unsafe. I wrote it to hold your file in
+  memory and nothing else. The problem is that you have no way to check that.
+  You can read every line of the code on GitHub, but you cannot confirm that
+  this website is running that code. Nobody should have to take a stranger's
+  website on trust with a document that matters, and I would not ask you to.</p>
+ <p><a href="https://github.com/benjamin-dw/Redogtor" rel="noreferrer noopener"
+  target="_blank">Download it from GitHub</a> and the question disappears,
+  because nothing leaves your computer at all.</p>
+
+ <h3>What Redogtor is</h3>
+ <p>A free tool I built, with help from a Large Language Model (LLM), to help
+  you safely black out private information in documents. It uses smart
   text-reading tools (Microsoft Presidio and Explosion AI's spaCy) that run
   entirely on the computer sitting on my desk.</p>
 
- <h3>Your Privacy Comes First</h3>
+ <h3>What this site does with your file</h3>
  <p>This website runs on my private home computer. When you put a file in, my
   computer only holds it in its short-term memory (RAM) while it works. It never
   saves your file to a hard drive, it keeps absolutely zero logs, and it forgets
   everything the second your document is done.</p>
-
  <p>This site reaches you through Cloudflare, which briefly handles your traffic
   on its way to my computer. Cloudflare does not store your document, but it is a
-  third party in the path. If that matters for your work, download the tool and
-  run it on your own machine instead.</p>
+  third party in the path.</p>
 
- <h3>How to Check My Work</h3>
- <p>You don't have to take my word for it. All the code that makes this run is
-  public at <a href="https://github.com/benjamin-dw/Redogtor" rel="noreferrer noopener"
-  target="_blank">github.com/benjamin-dw/Redogtor</a>. You or your IT team can open
-  the <code>app.py</code> file to verify exactly how it works: tracking is turned
-  off (<code>logging.disable</code>), no files are saved (<code>io.BytesIO</code>),
-  and the language model runs directly on my desk computer with no outside
-  sharing.</p>
-
- <h3>When to Run It Yourself</h3>
- <p>While I built this website to be extremely private, the absolute safest way to
-  handle highly sensitive workplace documents is to never send them over the
-  internet at all. I strongly suggest you download the tool from GitHub and run it
-  directly on your own computer.</p>
+ <h3>How to check my work</h3>
+ <p>All the code is public at <a href="https://github.com/benjamin-dw/Redogtor"
+  rel="noreferrer noopener" target="_blank">github.com/benjamin-dw/Redogtor</a>.
+  You or your IT team can open the <code>app.py</code> file to verify exactly how
+  it works: tracking is turned off (<code>logging.disable</code>), no files are
+  saved (<code>io.BytesIO</code>), and the language model runs directly on my
+  desk computer with no outside sharing. That verification is worth far more
+  once you are running the code yourself.</p>
 
  <h3>GNU License &amp; Liability</h3>
  <p>Released under the GNU General Public License (GPL). The code is free to use
