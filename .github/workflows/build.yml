@@ -18,7 +18,7 @@ jobs:
         include:
           - os: macos-14
             label: mac-apple-silicon
-          - os: macos-13
+          - os: macos-15-intel
             label: mac-intel
           - os: windows-latest
             label: windows
@@ -27,9 +27,9 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -63,7 +63,7 @@ jobs:
           cd dist
           tar -czf Redactor-linux.tar.gz Redactor
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Redactor-${{ matrix.label }}
           path: |
