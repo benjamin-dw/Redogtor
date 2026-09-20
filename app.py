@@ -438,6 +438,7 @@ def no_store(resp):
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
     resp.headers["X-Content-Type-Options"] = "nosniff"
     return resp
 
@@ -519,6 +520,7 @@ PAGE = r"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
 <title>Redogtor</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icon-180.png">
@@ -933,6 +935,11 @@ def quit_app():
         return Response(status=404)
     threading.Timer(0.5, lambda: os._exit(0)).start()
     return jsonify({"ok": True})
+
+
+@app.route("/robots.txt")
+def robots():
+    return Response("User-agent: *\nDisallow: /\n", mimetype="text/plain")
 
 
 @app.route("/health")
