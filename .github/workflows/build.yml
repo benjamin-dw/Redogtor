@@ -39,7 +39,7 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           pip install flask waitress "spacy>=3.8,<3.9" \
             presidio-analyzer presidio-anonymizer \
-            python-docx pypdf reportlab pyinstaller
+            python-docx pypdf reportlab pymupdf pyinstaller
           pip install "https://github.com/explosion/spacy-models/releases/download/${MODEL}-3.8.0/${MODEL}-3.8.0-py3-none-any.whl"
 
       - name: Build

@@ -306,9 +306,9 @@ def _form_fields(text, want_names, want_numbers):
     return out
 
 
-def redact(text, wanted, extra_words, number_them, keep_words=(),
-           loose_names=False, loose_numbers=False):
-    """Return (redacted_text, {label: count})."""
+def find_spans(text, wanted, extra_words, keep_words=(),
+               loose_names=False, loose_numbers=False):
+    """Return the non-overlapping character ranges that should be taken out."""
     found = []
     if wanted:
         found = list(ANALYZER.analyze(text=text, language="en",
@@ -341,7 +341,14 @@ def redact(text, wanted, extra_words, number_them, keep_words=(),
         if r.start >= last_end:
             kept.append(r)
             last_end = r.end
+    return kept
 
+
+def redact(text, wanted, extra_words, number_them, keep_words=(),
+           loose_names=False, loose_numbers=False):
+    """Return (redacted_text, {label: count})."""
+    kept = find_spans(text, wanted, extra_words, keep_words,
+                      loose_names, loose_numbers)
     counts, seen, out, cursor = {}, {}, [], 0
     for r in kept:
         label = LABELS.get(r.entity_type, r.entity_type)
@@ -362,6 +369,34 @@ def redact(text, wanted, extra_words, number_them, keep_words=(),
 
 
 # ------------------------------------------------------------ file reading
+def _unshatter(text):
+    """Some PDFs extract one word per line. Put those lines back together."""
+    lines = text.split("\n")
+    filled = [l for l in lines if l.strip()]
+    if len(filled) < 12:
+        return text
+    lone = sum(1 for l in filled if len(l.split()) == 1)
+    if lone / len(filled) < 0.6:
+        return text
+
+    out, buf = [], []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if buf:
+                out.append(" ".join(buf)); buf = []
+            out.append("")
+        elif len(stripped.split()) == 1:
+            buf.append(stripped)
+        else:
+            if buf:
+                out.append(" ".join(buf)); buf = []
+            out.append(stripped)
+    if buf:
+        out.append(" ".join(buf))
+    return "\n".join(out)
+
+
 def read_upload(storage):
     name = (storage.filename or "").lower()
     blob = storage.read()
@@ -382,8 +417,19 @@ def read_upload(storage):
         from pypdf import PdfReader
 
         reader = PdfReader(io.BytesIO(blob))
-        pages = [(p.extract_text() or "") for p in reader.pages]
+        pages = []
+        for page in reader.pages:
+            # Layout mode keeps whole lines together. Without it some PDFs
+            # come back one word per line, which wrecks the detection.
+            try:
+                out = page.extract_text(extraction_mode="layout") or ""
+            except Exception:
+                out = ""
+            if not out.strip():
+                out = page.extract_text() or ""
+            pages.append(out)
         text = "\n\n".join(pages).strip()
+        text = _unshatter(text)
         if not text:
             raise ValueError(
                 "No text found in that PDF. It is probably a scan, which this "
@@ -398,6 +444,71 @@ def read_upload(storage):
         raise ValueError("Old .doc files are not supported. Save as .docx first.")
 
     raise ValueError("Unsupported file type. Use .txt, .eml, .docx or .pdf.")
+
+
+def redact_pdf_keep_layout(blob, wanted, extra_words, keep_words,
+                           loose_names, loose_numbers, show_labels=False):
+    """Black out words in the original PDF, leaving the layout alone.
+
+    The text underneath is genuinely removed, not merely covered over.
+    """
+    import pymupdf
+
+    doc = pymupdf.open(stream=blob, filetype="pdf")
+    total = 0
+    try:
+        for page in doc:
+            words = page.get_text("words")
+            if not words:
+                continue
+
+            text, places, last = "", [], None
+            for w in words:
+                x0, y0, x1, y1 = w[0], w[1], w[2], w[3]
+                token, block, line = w[4], w[5], w[6]
+                if last is not None:
+                    text += "\n" if (block, line) != last else " "
+                last = (block, line)
+                start = len(text)
+                text += token
+                places.append((start, len(text), pymupdf.Rect(x0, y0, x1, y1),
+                               (block, line)))
+
+            spans = find_spans(text, wanted, extra_words, keep_words,
+                               loose_names, loose_numbers)
+            if not spans:
+                continue
+
+            for span in spans:
+                hits = [pl for pl in places
+                        if pl[0] < span.end and span.start < pl[1]]
+                if not hits:
+                    continue
+                total += 1
+                label = LABELS.get(span.entity_type, span.entity_type)
+                # One box per line, so a name split across a line break does
+                # not black out everything in between.
+                by_line = {}
+                for pl in hits:
+                    by_line[pl[3]] = (by_line[pl[3]] | pl[2]
+                                      if pl[3] in by_line else pl[2])
+                for i, box in enumerate(by_line.values()):
+                    page.add_redact_annot(
+                        box,
+                        text=(" %s " % label) if (show_labels and i == 0) else None,
+                        fill=(0, 0, 0),
+                        text_color=(1, 1, 1),
+                        fontsize=7,
+                        align=pymupdf.TEXT_ALIGN_CENTER,
+                    )
+            page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
+
+        doc.set_metadata({})
+        out = io.BytesIO()
+        doc.save(out, garbage=4, deflate=True, clean=True)
+        return out.getvalue(), total
+    finally:
+        doc.close()
 
 
 def make_pdf(text, mode="labels"):
@@ -674,6 +785,7 @@ PAGE = r"""<!doctype html>
   <button type="button" class="quiet" id="copy">Copy</button>
   <button type="button" class="quiet" id="txt">Save as text</button>
   <button type="button" class="quiet" id="pdf">Save as PDF</button>
+  <button type="button" class="quiet hidden" id="pdforig">Save as PDF, original layout</button>
  </div>
  <div id="out"></div>
  <p class="warn">Read it through before you send it on. A tool like this will
@@ -780,6 +892,7 @@ $("vbar").onclick=function(){mode="bars";render()};
 
 /* choosing a file */
 $("browse").onclick=function(){$("file").click()};
+function isPdf(f){return f && /\.pdf$/i.test(f.name);}
 $("file").onchange=function(){
   if(this.files[0]){$("filename").textContent=this.files[0].name;
     $("text").value="";}
@@ -835,6 +948,7 @@ $("run").onclick=function(){
       if(d.error){say(d.error,true);$("result").classList.add("hidden");return}
       redacted=d.text; render();
       $("result").classList.remove("hidden");
+      $("pdforig").classList.toggle("hidden", !isPdf($("file").files[0]));
       say('<span class="count">'+d.count+' removed</span> \u2014 '+d.summary);
     })
     .catch(function(){clearTimeout(timer);say("Could not reach the server. Check it is still running.",true)})
@@ -855,6 +969,7 @@ $("quit").onclick=function(){
 $("clear").onclick=function(){
   $("text").value="";$("file").value="";$("extra").value="";$("keep").value="";
   $("filename").textContent="Word, PDF, plain text or a saved email. Drag one here.";
+  $("pdforig").classList.add("hidden");
   redacted="";$("out").textContent="";
   $("result").classList.add("hidden");say("");
 };
@@ -874,6 +989,30 @@ function download(blob,name){
 $("txt").onclick=function(){
   download(new Blob([redacted],{type:"text/plain;charset=utf-8"}),"redacted.txt");
   say("Saved as redacted.txt");
+};
+
+$("pdforig").onclick=function(){
+  var f=$("file").files[0];
+  if(!isPdf(f)){say("That only works on a PDF.",true);return;}
+  say("Blacking out the original\u2026 this takes longer.");
+  var fd=new FormData();
+  fd.append("file",f);
+  ["names","contact","address","places","orgs","ids","dates",
+   "loosenames","loosenumbers"].forEach(function(k){
+    if($(k).checked) fd.append(k,"on")});
+  fd.append("extra",$("extra").value);
+  fd.append("keep",$("keep").value);
+  fd.append("mode",mode);
+  fetch("/redact-pdf",{method:"POST",body:fd,cache:"no-store"})
+    .then(function(r){
+      if(!r.ok) return r.json().then(function(d){throw d.error||"failed";});
+      return r.blob();
+    })
+    .then(function(b){
+      download(b,"redacted-original-layout.pdf");
+      say("Saved with the original layout. Check every page before sending it.");
+    })
+    .catch(function(e){say(typeof e==="string"?e:"Could not rebuild that PDF.",true)});
 };
 
 $("pdf").onclick=function(){
@@ -935,6 +1074,40 @@ def quit_app():
         return Response(status=404)
     threading.Timer(0.5, lambda: os._exit(0)).start()
     return jsonify({"ok": True})
+
+
+@app.route("/redact-pdf", methods=["POST"])
+def do_redact_pdf():
+    """Give back the same PDF with the sensitive words blacked out."""
+    upload = request.files.get("file")
+    if not upload or not (upload.filename or "").lower().endswith(".pdf"):
+        return jsonify({"error": "Send a PDF for this."}), 400
+    try:
+        blob = upload.read()
+        if len(blob) > MAX_BYTES:
+            return jsonify({"error": "That file is larger than 25 MB."}), 400
+        extra = [w for w in re.split(r"[,\n]", request.form.get("extra", ""))
+                 if w.strip()]
+        keep = [w for w in re.split(r"[,\n]", request.form.get("keep", ""))
+                if w.strip()]
+        data, count = redact_pdf_keep_layout(
+            blob,
+            wanted_entities(request.form),
+            extra, keep,
+            request.form.get("loosenames") == "on",
+            request.form.get("loosenumbers") == "on",
+            request.form.get("mode") == "labels",
+        )
+    except ImportError:
+        return jsonify({"error": "PyMuPDF is not installed on this copy."}), 400
+    except Exception:
+        return jsonify({"error": "That PDF could not be rebuilt."}), 400
+
+    resp = Response(data, mimetype="application/pdf")
+    resp.headers["Content-Disposition"] = (
+        'attachment; filename="redacted-original-layout.pdf"')
+    resp.headers["X-Redaction-Count"] = str(count)
+    return resp
 
 
 @app.route("/robots.txt")

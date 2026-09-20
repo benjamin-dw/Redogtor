@@ -60,7 +60,7 @@ python3 -m venv "$DIR/venv"
 "$DIR/venv/bin/pip" install -q --upgrade pip setuptools wheel
 "$DIR/venv/bin/pip" install -q \
   flask waitress "spacy>=3.8,<3.9" presidio-analyzer presidio-anonymizer \
-  python-docx pypdf reportlab
+  python-docx pypdf reportlab pymupdf
 
 # --- 4. language model --------------------------------------------------
 RAM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)

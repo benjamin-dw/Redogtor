@@ -6,7 +6,7 @@ WORKDIR /app
 RUN pip install --no-cache-dir \
       flask waitress "spacy>=3.8,<3.9" \
       presidio-analyzer presidio-anonymizer \
-      python-docx pypdf reportlab \
+      python-docx pypdf reportlab pymupdf \
  && pip install --no-cache-dir \
       https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl
 

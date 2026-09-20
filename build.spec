@@ -29,6 +29,7 @@ for package in (
     "presidio_analyzer",
     "presidio_anonymizer",
     "phonenumbers",
+    "pymupdf",
 ):
     try:
         d, b, h = collect_all(package)
@@ -45,6 +46,7 @@ hiddenimports += [
     "srsly.msgpack.util",
     "waitress",
     "docx",
+    "pymupdf",
     "pypdf",
     MODEL,
 ]

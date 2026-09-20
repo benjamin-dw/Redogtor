@@ -31,7 +31,7 @@ WHEEL = ("https://github.com/explosion/spacy-models/releases/download/"
 PACKAGES = [
     "flask", "waitress", "spacy>=3.8,<3.9",
     "presidio-analyzer", "presidio-anonymizer",
-    "python-docx", "pypdf", "reportlab",
+    "python-docx", "pypdf", "reportlab", "pymupdf",
 ]
 
 
@@ -178,8 +178,7 @@ def make_shortcut():
         return
 
     # Only once the new one is safely in place.
-    for stale in (apps / "redactor.desktop", icons / "redactor.png",
-                  apps / "redogter.desktop", icons / "redogter.png"):
+    for stale in (apps / "redactor.desktop", icons / "redactor.png"):
         try:
             stale.unlink()
         except FileNotFoundError:
