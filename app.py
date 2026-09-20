@@ -692,6 +692,11 @@ PAGE = r"""<!doctype html>
   saves your file to a hard drive, it keeps absolutely zero logs, and it forgets
   everything the second your document is done.</p>
 
+ <p>This site reaches you through Cloudflare, which briefly handles your traffic
+  on its way to my computer. Cloudflare does not store your document, but it is a
+  third party in the path. If that matters for your work, download the tool and
+  run it on your own machine instead.</p>
+
  <h3>How to Check My Work</h3>
  <p>You don't have to take my word for it. All the code that makes this run is
   public at <a href="https://github.com/benjamin-dw/Redogtor" rel="noreferrer noopener"
