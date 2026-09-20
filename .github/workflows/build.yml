@@ -1,0 +1,80 @@
+name: Build apps
+
+# Runs when you publish a tag like v1.0.0, or when you press the button
+# on the Actions tab.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  MODEL: en_core_web_lg
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            label: mac-apple-silicon
+          - os: macos-13
+            label: mac-intel
+          - os: windows-latest
+            label: windows
+          - os: ubuntu-22.04
+            label: linux
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the libraries
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install flask waitress "spacy>=3.8,<3.9" \
+            presidio-analyzer presidio-anonymizer \
+            python-docx pypdf reportlab pyinstaller
+          pip install "https://github.com/explosion/spacy-models/releases/download/${MODEL}-3.8.0/${MODEL}-3.8.0-py3-none-any.whl"
+
+      - name: Build
+        shell: bash
+        run: pyinstaller --noconfirm build.spec
+
+      - name: Package for macOS
+        if: runner.os == 'macOS'
+        run: |
+          cd dist
+          ditto -c -k --keepParent Redactor.app Redactor-${{ matrix.label }}.zip
+
+      - name: Package for Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/Redactor -DestinationPath dist/Redactor-windows.zip
+
+      - name: Package for Linux
+        if: runner.os == 'Linux'
+        run: |
+          cd dist
+          tar -czf Redactor-linux.tar.gz Redactor
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Redactor-${{ matrix.label }}
+          path: |
+            dist/Redactor-*.zip
+            dist/Redactor-*.tar.gz
+          retention-days: 14
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Redactor-*.zip
+            dist/Redactor-*.tar.gz
