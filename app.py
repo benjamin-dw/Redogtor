@@ -805,7 +805,7 @@ PAGE = r"""<!doctype html>
  <p>Not because I think this site is unsafe. I wrote this program to save
   nothing once you close it and keep zero logs. The problem is that you have no way to check that.
   You can read every line of the code on GitHub, but you cannot confirm that
-  this website is running that code. Nobody should have to take a stranger's
+  this website is running that code. Nobody should take a stranger's
   website on trust with a document that matters.</p>
  <p><a href="https://github.com/benjamin-dw/Redogtor" rel="noreferrer noopener"
   target="_blank">Download it from GitHub</a> and the question disappears,
