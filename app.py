@@ -692,7 +692,9 @@ PAGE = r"""<!doctype html>
  button,a.dl{font:inherit;font-size:.95rem;padding:10px 20px;border-radius:2px;
    border:1px solid var(--ink);background:var(--ink);
    color:var(--sheet);cursor:pointer}
- a.dl{display:inline-block;text-decoration:none;font-size:1.1rem;padding:14px 30px;margin:4px 0 12px}
+ a.dl{display:inline-block;text-decoration:none;font-size:1.05rem;font-weight:600;padding:12px 26px;margin:4px 0 12px;border-radius:10px;background:#1d5e9b;color:#fff;border:1px solid #1d5e9b}
+ a.dl:hover{background:#174b7c;border-color:#174b7c}
+ a.dl:focus-visible{outline:3px solid #1d5e9b;outline-offset:3px}
  button.quiet{background:transparent;color:var(--ink);border-color:var(--rule)}
  button:disabled{opacity:.4;cursor:default}
  :focus-visible{outline:2px solid var(--stamp);outline-offset:2px}
