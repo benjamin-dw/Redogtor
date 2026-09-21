@@ -689,9 +689,10 @@ PAGE = r"""<!doctype html>
    border-radius:2px;font:inherit;font-size:.95rem;background:var(--sheet);color:var(--ink)}
 
  .go{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:20px}
- button{font:inherit;font-size:.95rem;padding:10px 20px;border-radius:2px;
+ button,a.dl{font:inherit;font-size:.95rem;padding:10px 20px;border-radius:2px;
    border:1px solid var(--ink);background:var(--ink);
    color:var(--sheet);cursor:pointer}
+ a.dl{display:inline-block;text-decoration:none;font-size:1.1rem;padding:14px 30px;margin:4px 0 12px}
  button.quiet{background:transparent;color:var(--ink);border-color:var(--rule)}
  button:disabled{opacity:.4;cursor:default}
  :focus-visible{outline:2px solid var(--stamp);outline-offset:2px}
@@ -795,14 +796,15 @@ PAGE = r"""<!doctype html>
 <section class="about hidden" id="about-web">
  <img src="/icon-512.png" alt="">
  <h2>Use this site to try it. Then run it on your own computer.</h2>
+ <p><a class="dl" href="https://github.com/benjamin-dw/Redogtor/releases" rel="noreferrer noopener" target="_blank">Download Redogtor</a></p>
  <p>This website is a demonstration. It lets you see what the tool does before
   you install anything. For any document that actually matters, download
   Redogtor and run it on your own machine instead.</p>
- <p>Not because I think this site is unsafe. I wrote it to hold your file in
-  memory and nothing else. The problem is that you have no way to check that.
+ <p>Not because I think this site is unsafe. I wrote this program to save
+  nothing once you close it and keep zero logs. The problem is that you have no way to check that.
   You can read every line of the code on GitHub, but you cannot confirm that
   this website is running that code. Nobody should have to take a stranger's
-  website on trust with a document that matters, and I would not ask you to.</p>
+  website on trust with a document that matters.</p>
  <p><a href="https://github.com/benjamin-dw/Redogtor" rel="noreferrer noopener"
   target="_blank">Download it from GitHub</a> and the question disappears,
   because nothing leaves your computer at all.</p>
@@ -873,7 +875,7 @@ PAGE = r"""<!doctype html>
 
 <script>
 var $=function(id){return document.getElementById(id)};
-window.DESKTOP=__DESKTOP__;
+window.DESKTOP=__DESKTOP__;window.CANQUIT=__QUIT__;
 var redacted="", mode="labels", timer=null;
 
 function esc(s){return s.replace(/[&<>]/g,function(c){
@@ -960,7 +962,7 @@ $("run").onclick=function(){
     .then(function(){$("run").disabled=false});
 };
 
-if(location.search.indexOf("desktop")>-1||window.DESKTOP){
+if(window.CANQUIT){
   $("quit").classList.remove("hidden");
 }
 /* One disclaimer or the other, never both. */
@@ -1034,7 +1036,7 @@ $("pdf").onclick=function(){
 
 @app.route("/")
 def home():
-    page = PAGE.replace("__DESKTOP__", "true" if DESKTOP else "false")
+    page = PAGE.replace("__DESKTOP__", "false" if HOSTED else "true").replace("__QUIT__", "true" if DESKTOP else "false")
     return Response(page, mimetype="text/html")
 
 
@@ -1071,6 +1073,12 @@ def icon(size):
 
 
 DESKTOP = os.environ.get("REDACTOR_DESKTOP") == "1"
+HOSTED = os.environ.get("REDACTOR_HOSTED") == "1"
+
+if not DESKTOP and not HOSTED:
+    print("NOTE: Started directly. For the normal desktop setup, use install.sh "
+          "(Linux), start-mac.command (Mac) or start-windows.bat (Windows).")
+
 
 
 @app.route("/quit", methods=["POST"])

@@ -43,6 +43,10 @@ Use this if you already have Python, or if the download above is blocked on your
    - **Windows:** `py run.py`
    - **macOS / Linux:** `python3 run.py`
 
+> **Start it with `run.py`, not `app.py`.** `run.py` sets up the private
+> environment and tells Redogtor it is running as your own local copy. Starting
+> `app.py` by hand skips that setup and shows the wrong page text.
+
 > **Note:** The first time you run Redogtor, it will take 10–25 minutes to download the natural language models and set up a private virtual environment (`.venv`). On subsequent runs, it will launch in seconds.
 
 ## How to Check My Work (Auditing)
