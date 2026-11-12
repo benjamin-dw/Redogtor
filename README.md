@@ -49,6 +49,29 @@ Use this if you already have Python, or if the download above is blocked on your
 
 > **Note:** The first time you run Redogtor, it will take 10–25 minutes to download the natural language models and set up a private virtual environment (`.venv`). On subsequent runs, it will launch in seconds.
 
+## For Programs: the JSON API
+
+Another program on the same machine (such as Leftward) can send text to `POST /api/redact` as JSON and get the
+redacted text back. By default only **people's names** are taken out; organisations are kept unless the caller asks.
+
+```
+POST /api/redact
+{"text": "Margaret Thibodeau called from Toronto Community Housing."}
+
+{"text": "[NAME 1] called from Toronto Community Housing.", "counts": {"NAME": 1}, "redacted": ["names"], "api": 1}
+```
+
+- `text` (one string) or `texts` (a list, up to 200).
+- `redact`: the groups to take out, from `names`, `contact`, `address`, `places`, `orgs`, `ids`, `dates`. Default `["names"]`.
+- `keep`, `extra`: lists of words to always keep or always take out.
+- `number` (default `true`): the same person keeps the same number (`[NAME 1]`). `loose_names`, `loose_numbers` (default `false`).
+
+Anything it doesn't understand (an unknown group or field, a wrong type) is refused with a 400 and an `error`, never
+redacted less than asked. `GET /health` says the API version, the model and the default. Tests: `python tests/test_api.py`.
+
+The Docker image installs every package from `requirements.lock` by its hash (`requirements.in` is the list it was made
+from), on Python's own image pinned by digest. On the page, "Employers, schools and organisations" now starts unticked.
+
 ## How to Check My Work (Auditing)
 
 If your IT team wants to verify the privacy claims, they can review the code directly:

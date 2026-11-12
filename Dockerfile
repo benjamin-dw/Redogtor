@@ -1,14 +1,14 @@
-FROM python:3.12-slim
+# Python's own image by digest, and every package from requirements.lock by hash.
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 
 RUN useradd --system --no-create-home redactor
 WORKDIR /app
 
-RUN pip install --no-cache-dir \
-      flask waitress "spacy>=3.8,<3.9" \
-      presidio-analyzer presidio-anonymizer \
-      python-docx pypdf reportlab pymupdf \
- && pip install --no-cache-dir \
-      https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl
+COPY requirements.lock /tmp/requirements.lock
+RUN pip install --no-cache-dir --disable-pip-version-check --require-hashes --no-deps --only-binary :all: \
+      -r /tmp/requirements.lock \
+ && pip check \
+ && rm /tmp/requirements.lock
 
 COPY app.py /app/app.py
 

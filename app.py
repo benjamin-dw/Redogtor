@@ -578,6 +578,92 @@ def wanted_entities(form):
     return wanted
 
 
+# ------------------------------------------------------------ JSON API
+# For programs that call Redogtor (Leftward's AI gate). Plain JSON in and out, the same engine as the page.
+# What is taken out by default: people's names only. Organisations are kept unless the caller asks for them.
+API_VERSION = 1
+API_GROUPS = {
+    "names": GROUP_NAMES,
+    "contact": GROUP_CONTACT,
+    "address": GROUP_ADDRESS,
+    "places": GROUP_PLACE,
+    "orgs": GROUP_ORG,
+    "ids": GROUP_IDS,
+    "dates": GROUP_DATES,
+}
+API_DEFAULT = ["names"]
+API_MAX_TEXTS = 200
+
+
+def _api_words(value, what):
+    """A list of short strings, or a refusal naming what was wrong."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ValueError("%s must be a list of words." % what)
+    return [v for v in value if v.strip()]
+
+
+def api_request(body):
+    """Check a JSON request. Returns (texts, one, groups, keep, extra, number, loose_names, loose_numbers).
+    Anything unexpected is refused rather than guessed at, so a caller never gets back text that was redacted
+    less than it asked for."""
+    if not isinstance(body, dict):
+        raise ValueError("Send a JSON object.")
+    known = {"text", "texts", "redact", "keep", "extra", "number", "loose_names", "loose_numbers"}
+    unknown = sorted(set(body) - known)
+    if unknown:
+        raise ValueError("Unknown field: %s." % ", ".join(unknown))
+    if ("text" in body) == ("texts" in body):
+        raise ValueError("Send either text or texts.")
+    one = "text" in body
+    texts = [body["text"]] if one else body["texts"]
+    if not isinstance(texts, list) or not texts or not all(isinstance(t, str) for t in texts):
+        raise ValueError("texts must be a list of strings." if not one else "text must be a string.")
+    if len(texts) > API_MAX_TEXTS:
+        raise ValueError("At most %d texts at a time." % API_MAX_TEXTS)
+    if sum(len(t) for t in texts) > MAX_BYTES:
+        raise ValueError("That is larger than 25 MB.")
+    groups = body.get("redact", API_DEFAULT)
+    if not isinstance(groups, list) or not all(isinstance(g, str) for g in groups):
+        raise ValueError("redact must be a list, for example [\"names\", \"contact\"].")
+    bad = sorted(set(groups) - set(API_GROUPS))
+    if bad:
+        raise ValueError("Unknown group: %s. Known: %s." % (", ".join(bad), ", ".join(sorted(API_GROUPS))))
+    for flag in ("number", "loose_names", "loose_numbers"):
+        if flag in body and not isinstance(body[flag], bool):
+            raise ValueError("%s must be true or false." % flag)
+    return (texts, one, sorted(set(groups)), _api_words(body.get("keep"), "keep"),
+            _api_words(body.get("extra"), "extra"), body.get("number", True),
+            body.get("loose_names", False), body.get("loose_numbers", False))
+
+
+@app.route("/api/redact", methods=["POST"])
+def api_redact():
+    """POST JSON {"text": "..."} or {"texts": [...]}, with optional "redact" (groups, default ["names"]),
+    "keep", "extra", "number" (default true), "loose_names", "loose_numbers".
+    Answers {"text"} or {"texts"}, plus "counts", "redacted" (the groups used) and "api"."""
+    if not request.is_json:
+        return jsonify({"error": "Send JSON (Content-Type: application/json)."}), 415
+    try:
+        body = request.get_json(silent=True)
+        texts, one, groups, keep, extra, number, loose_names, loose_numbers = api_request(body)
+        wanted = [e for g in groups for e in API_GROUPS[g]]
+        out, counts = [], {}
+        for text in texts:
+            result, c = redact(text, wanted, extra, number, keep, loose_names, loose_numbers)
+            out.append(result)
+            for k, v in c.items():
+                counts[k] = counts.get(k, 0) + v
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        return jsonify({"error": "That could not be redacted."}), 500
+    answer = {"counts": counts, "redacted": groups, "api": API_VERSION}
+    answer["text" if one else "texts"] = out[0] if one else out
+    return jsonify(answer)
+
+
 @app.route("/redact", methods=["POST"])
 def do_redact():
     try:
@@ -759,7 +845,7 @@ PAGE = r"""<!doctype html>
  <label class="row"><input type="checkbox" id="contact" checked><span>Emails, phone numbers and web links</span></label>
  <label class="row"><input type="checkbox" id="address" checked><span>Street addresses and postal codes</span></label>
  <label class="row"><input type="checkbox" id="places"><span>City, province and country names</span></label>
- <label class="row"><input type="checkbox" id="orgs" checked><span>Employers, schools and organisations</span></label>
+ <label class="row"><input type="checkbox" id="orgs"><span>Employers, schools and organisations</span></label>
  <label class="row"><input type="checkbox" id="ids" checked><span>ID and account numbers: SIN, health card, licence, bank, credit card</span></label>
  <label class="row"><input type="checkbox" id="dates" checked><span>Dates, including dates of birth</span></label>
  <label class="row"><input type="checkbox" id="loosenames" checked><span>Form fields: a lone name on its own line, with no sentence around it</span></label>
@@ -1132,7 +1218,7 @@ def robots():
 
 @app.route("/health")
 def health():
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "api": API_VERSION, "model": MODEL, "default": API_DEFAULT})
 
 
 if __name__ == "__main__":

@@ -1,0 +1,9 @@
+flask
+waitress
+spacy>=3.8,<3.9
+presidio-analyzer
+presidio-anonymizer
+python-docx
+pypdf
+reportlab
+pymupdf
