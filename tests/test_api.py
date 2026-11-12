@@ -5,6 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("REDACTOR_HOSTED", "1")
+os.environ.setdefault("REDACTOR_API", "1")
 import app as redogtor  # noqa: E402
 
 C = redogtor.app.test_client()
@@ -67,6 +68,31 @@ def test_health_and_page():
     assert got["ok"] and got["api"] == 1 and got["default"] == ["names"], got
     page = C.get("/").get_data(as_text=True)
     assert 'id="orgs" checked' not in page and 'id="orgs"' in page and 'id="names" checked' in page
+
+
+def test_api_is_off_unless_switched_on():
+    redogtor.API_ON = False
+    try:
+        assert C.post("/api/redact", json={"text": NOTE}).status_code == 404
+        assert "api" not in C.get("/health").get_json()
+    finally:
+        redogtor.API_ON = True
+
+
+def test_api_never_answers_through_the_website():
+    for h in ({"CF-Connecting-IP": "203.0.113.9"}, {"X-Forwarded-For": "203.0.113.9"}, {"CF-Ray": "abc"},
+              {"Forwarded": "for=203.0.113.9"}):
+        assert C.post("/api/redact", json={"text": NOTE}, headers=h).status_code == 404, h
+        assert "api" not in C.get("/health", headers=h).get_json(), h
+    r = C.post("/api/redact", json={"text": NOTE}, environ_base={"REMOTE_ADDR": "203.0.113.9"})
+    assert r.status_code == 404
+    old = redogtor.API_FROM
+    redogtor.API_FROM = "127.0.0.1,172.17.0.0/16"
+    try:
+        r = C.post("/api/redact", json={"text": NOTE}, environ_base={"REMOTE_ADDR": "172.17.0.5"})
+        assert r.status_code == 200, r.status_code
+    finally:
+        redogtor.API_FROM = old
 
 
 def test_old_form_endpoint_unchanged():

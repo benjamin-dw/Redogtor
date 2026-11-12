@@ -54,6 +54,13 @@ Use this if you already have Python, or if the download above is blocked on your
 Another program on the same machine (such as Leftward) can send text to `POST /api/redact` as JSON and get the
 redacted text back. By default only **people's names** are taken out; organisations are kept unless the caller asks.
 
+**The API is off unless you switch it on.** Start Redogtor with `REDACTOR_API=1`. Even then it only answers programs
+on the same machine (`127.0.0.1`), and it refuses anything that arrived through a tunnel or proxy such as Cloudflare,
+so switching it on never puts it on a public website. If the calling program runs somewhere else (a Docker container
+or another machine on your Tailscale network, for example), list its addresses in `REDACTOR_API_FROM`, separated by
+commas, for example `REDACTOR_API_FROM=127.0.0.1,::1,172.17.0.0/16`. When the API is off or the caller is not
+allowed, `/api/redact` answers 404, as if it did not exist.
+
 ```
 POST /api/redact
 {"text": "Margaret Thibodeau called from Toronto Community Housing."}
@@ -67,10 +74,29 @@ POST /api/redact
 - `number` (default `true`): the same person keeps the same number (`[NAME 1]`). `loose_names`, `loose_numbers` (default `false`).
 
 Anything it doesn't understand (an unknown group or field, a wrong type) is refused with a 400 and an `error`, never
-redacted less than asked. `GET /health` says the API version, the model and the default. Tests: `python tests/test_api.py`.
+redacted less than asked. For an allowed caller, `GET /health` also says the API version, the model and the default.
+Tests: `python tests/test_api.py` and `python tests/test_checks.py`.
 
-The Docker image installs every package from `requirements.lock` by its hash (`requirements.in` is the list it was made
+The Docker image installs every package from `requirements.txt` by its hash (`requirements.in` is the list it was made
 from), on Python's own image pinned by digest. On the page, "Employers, schools and organisations" now starts unticked.
+
+## Keeping Redogtor up to date
+
+Redogtor checks itself, but it never updates itself. Nothing is installed without you.
+
+- **Built-in check.** About 30 seconds after it starts, and then once a day, Redogtor asks
+  [osv.dev](https://osv.dev) (the public database of known security holes that `pip-audit` uses) about the exact
+  versions it has installed, asks PyPI whether its main packages have newer versions, and asks spaCy's model list
+  whether there is a newer name-finding model. It sends out only package names and version numbers.
+  - On your own computer, any finding shows as a short notice at the top of the page.
+  - On a server, it writes one line to the system log (`journalctl -u redactor | grep "Redogtor check"`).
+  - Full results are at `http://127.0.0.1:8765/status`, which only answers the same machine and never through the
+    website. `POST /status/check` runs the check again now.
+  - A check that could not run says so ("could not fully check"); it is never shown as all clear.
+  - To switch it off, start Redogtor with `REDACTOR_NO_CHECKS=1`.
+- **On GitHub.** Dependabot (`.github/dependabot.yml`) looks every Monday at `requirements.txt`, the Docker base image
+  and the build workflow, and opens a suggested change for anything with a security fix or a newer version. Test
+  before accepting a big jump in spaCy, thinc, Presidio or PyMuPDF, since it can change what gets caught.
 
 ## How to Check My Work (Auditing)
 

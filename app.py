@@ -37,6 +37,15 @@ MODEL = os.environ.get("REDACTOR_MODEL", "en_core_web_lg")
 PORT = int(os.environ.get("REDACTOR_PORT", "8765"))
 MAX_BYTES = 25 * 1024 * 1024
 
+# The JSON API for programs (/api/redact) is OFF unless REDACTOR_API=1. Even when on, it only answers programs on
+# this machine (or the addresses listed in REDACTOR_API_FROM), never anything that came in through a tunnel or proxy
+# such as Cloudflare, so switching it on can never put it on the website.
+API_ON = os.environ.get("REDACTOR_API") == "1"
+API_FROM = os.environ.get("REDACTOR_API_FROM", "127.0.0.1,::1")
+# The daily security and update check. On unless REDACTOR_NO_CHECKS=1. It sends out package names and version
+# numbers only, never any text or documents.
+CHECKS_ON = os.environ.get("REDACTOR_NO_CHECKS") != "1"
+
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_BYTES
 app.logger.disabled = True
@@ -578,6 +587,206 @@ def wanted_entities(form):
     return wanted
 
 
+# ------------------------------------------------------------ who is asking
+# Headers a tunnel or proxy adds. A request carrying any of them came from outside, even if it reaches us from
+# 127.0.0.1 (cloudflared on the Pi connects locally), so it is never treated as "this machine".
+_FORWARD_HEADERS = ("CF-Connecting-IP", "CF-Ray", "X-Forwarded-For", "X-Real-IP", "Forwarded", "True-Client-IP")
+
+
+def from_here(allowed):
+    """True only for a direct request from an allowed address (default: this machine) with no proxy headers."""
+    import ipaddress
+    if any(request.headers.get(h) for h in _FORWARD_HEADERS):
+        return False
+    try:
+        ip = ipaddress.ip_address((request.remote_addr or "").split("%")[0])
+    except ValueError:
+        return False
+    if getattr(ip, "ipv4_mapped", None):
+        ip = ip.ipv4_mapped
+    for item in allowed.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            if ip in ipaddress.ip_network(item, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+# ------------------------------------------------------------ security and update check
+# Once a day (and soon after starting) Redogtor asks two public databases about its own packages:
+#   - OSV (osv.dev, the same database pip-audit uses) for known security holes in the exact versions installed
+#   - PyPI for newer versions, and spaCy's model list for a newer name-finding model
+# It only reports. It never installs anything, so pinned packages stay as they are until you update them yourself.
+# Only package names and version numbers are sent. Results are shown at /status, to this machine only.
+CHECK_EVERY = 24 * 3600
+CHECK_FIRST = 30
+CHECK_WATCH = ["presidio-analyzer", "presidio-anonymizer", "spacy", "thinc", "flask", "waitress",
+               "python-docx", "pypdf", "reportlab", "pymupdf"]
+_check_lock = threading.Lock()
+CHECKS = {"state": "not run yet", "checked": None, "security": [], "updates": [], "model": None, "problems": []}
+
+
+def _ssl_context():
+    import ssl
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
+def _get_json(url, body=None):
+    import urllib.request
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, headers={
+        "User-Agent": "Redogtor-check", "Content-Type": "application/json", "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=20, context=_ssl_context()) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def _norm(name):
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _installed():
+    """{normalised name: version} for every package this copy can see."""
+    from importlib import metadata
+    found = {}
+    for dist in metadata.distributions():
+        name = dist.metadata.get("Name")
+        if name and dist.version:
+            found[_norm(name)] = dist.version
+    return found
+
+
+def _newer(latest, current):
+    try:
+        from packaging.version import Version
+        return Version(latest) > Version(current)
+    except Exception:
+        return latest != current
+
+
+def _check_security(installed, problems):
+    names = sorted(installed)
+    queries = [{"package": {"name": n, "ecosystem": "PyPI"}, "version": installed[n]} for n in names]
+    found = []
+    for i in range(0, len(queries), 500):
+        answer = _get_json("https://api.osv.dev/v1/querybatch", {"queries": queries[i:i + 500]})
+        for q, res in zip(queries[i:i + 500], answer.get("results", [])):
+            for v in res.get("vulns") or []:
+                found.append({"package": q["package"]["name"], "version": q["version"], "id": v.get("id")})
+    for item in found[:30]:
+        try:
+            detail = _get_json("https://api.osv.dev/v1/vulns/%s" % item["id"])
+        except Exception:
+            detail = {}
+        fixed = sorted({e["fixed"] for a in detail.get("affected", []) if _norm(a.get("package", {}).get("name", "")) == item["package"]
+                        for r in a.get("ranges", []) for e in r.get("events", []) if "fixed" in e})
+        item["summary"] = (detail.get("summary") or "")[:200]
+        item["fixed_in"] = fixed
+        item["link"] = "https://osv.dev/vulnerability/%s" % item["id"]
+    return found
+
+
+def _check_updates(installed, problems):
+    updates = []
+    for name in CHECK_WATCH:
+        current = installed.get(_norm(name))
+        if not current:
+            continue
+        try:
+            latest = _get_json("https://pypi.org/pypi/%s/json" % name)["info"]["version"]
+        except Exception:
+            problems.append("Could not ask PyPI about %s." % name)
+            continue
+        if _newer(latest, current):
+            updates.append({"package": name, "installed": current, "latest": latest})
+    return updates
+
+
+def _check_model(installed, problems):
+    current = installed.get(_norm(MODEL))
+    spacy_v = installed.get("spacy")
+    if not current or not spacy_v:
+        problems.append("Could not read the installed model or spaCy version.")
+        return None
+    try:
+        compat = _get_json("https://raw.githubusercontent.com/explosion/spacy-models/master/compatibility.json")["spacy"]
+    except Exception:
+        problems.append("Could not read spaCy's model list.")
+        return None
+    minor = ".".join(spacy_v.split(".")[:2])
+    choices = []
+    for key in (spacy_v, minor, minor + ".0"):
+        choices += compat.get(key, {}).get(MODEL, [])
+    best = None
+    for v in choices:
+        if best is None or _newer(v, best):
+            best = v
+    return {"model": MODEL, "installed": current, "newest_for_your_spacy": best,
+            "newer": bool(best and _newer(best, current))}
+
+
+def run_checks():
+    """Run every check once. Never raises; a check that could not run is listed under "problems", so a failed
+    check is never shown as all clear."""
+    import datetime
+    if not _check_lock.acquire(blocking=False):
+        return CHECKS
+    try:
+        problems = []
+        try:
+            installed = _installed()
+        except Exception:
+            installed = {}
+        if not installed:
+            problems.append("Could not read which packages are installed, so nothing was checked.")
+            security, updates, model = [], [], None
+        else:
+            try:
+                security = _check_security(installed, problems)
+            except Exception:
+                security = []
+                problems.append("Could not reach osv.dev, so the security check did not run.")
+            updates = _check_updates(installed, problems)
+            model = _check_model(installed, problems)
+        if security:
+            state = "security fixes needed"
+        elif problems:
+            state = "could not fully check"
+        elif updates or (model and model["newer"]):
+            state = "updates available"
+        else:
+            state = "all clear"
+        CHECKS.update(state=state, security=security, updates=updates, model=model, problems=problems,
+                      checked=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
+        # One summary line for the system log (journalctl -u redactor). Package names only, never user data.
+        print("Redogtor check: %s. Security holes: %d. Updates: %s.%s" % (
+            state, len(security), ", ".join("%s %s" % (u["package"], u["latest"]) for u in updates) or "none",
+            " Problems: %d." % len(problems) if problems else ""), flush=True)
+        return CHECKS
+    finally:
+        _check_lock.release()
+
+
+def _check_loop():
+    import time
+    time.sleep(CHECK_FIRST)
+    while True:
+        run_checks()
+        time.sleep(CHECK_EVERY)
+
+
+def start_checks():
+    if CHECKS_ON:
+        threading.Thread(target=_check_loop, daemon=True).start()
+
+
 # ------------------------------------------------------------ JSON API
 # For programs that call Redogtor (Leftward's AI gate). Plain JSON in and out, the same engine as the page.
 # What is taken out by default: people's names only. Organisations are kept unless the caller asks for them.
@@ -642,7 +851,10 @@ def api_request(body):
 def api_redact():
     """POST JSON {"text": "..."} or {"texts": [...]}, with optional "redact" (groups, default ["names"]),
     "keep", "extra", "number" (default true), "loose_names", "loose_numbers".
-    Answers {"text"} or {"texts"}, plus "counts", "redacted" (the groups used) and "api"."""
+    Answers {"text"} or {"texts"}, plus "counts", "redacted" (the groups used) and "api".
+    Off unless REDACTOR_API=1, and only for callers on this machine (see API_FROM)."""
+    if not API_ON or not from_here(API_FROM):
+        return Response(status=404)
     if not request.is_json:
         return jsonify({"error": "Send JSON (Content-Type: application/json)."}), 415
     try:
@@ -807,6 +1019,9 @@ PAGE = r"""<!doctype html>
  .warn{font-size:.88rem;color:var(--muted);margin:14px 0 0;
    border-left:2px solid var(--stamp);padding-left:10px}
  .hidden{display:none}
+ .checknote{font-size:.88rem;color:var(--ink);background:var(--tint);margin:0 0 16px;
+   border-left:3px solid var(--stamp);padding:8px 12px;border-radius:2px}
+ .checknote a{color:var(--ink)}
  .about{margin-top:30px;border-top:1px solid var(--rule);padding-top:22px;
    font-size:.92rem;color:var(--muted)}
  .about::after{content:"";display:block;clear:both}
@@ -827,6 +1042,7 @@ PAGE = r"""<!doctype html>
   before you share a document. Files are handled in memory, never written to
   disk and never logged.</p>
 </header>
+<div class="checknote hidden" id="checknote" role="status"></div>
 
 <div class="drop" id="drop">
  <textarea id="text" aria-label="Paste the text you want redacted"
@@ -911,6 +1127,9 @@ PAGE = r"""<!doctype html>
  <p>This site reaches you through Cloudflare, which briefly handles your traffic
   on its way to my computer. Cloudflare does not store your document, but it is a
   third party in the path.</p>
+ <p>Once a day, my computer checks whether any of Redogtor's parts have a known
+  security problem or a newer version. That check sends out only the names and
+  version numbers of those parts, never anything you put in.</p>
 
  <h3>How to check my work</h3>
  <p>All the code is public at <a href="https://github.com/benjamin-dw/Redogtor"
@@ -942,6 +1161,11 @@ PAGE = r"""<!doctype html>
   The program only holds text in its short-term memory (RAM) while it works. It
   does not need the internet to function, it never saves your original files to
   your hard drive, and it keeps absolutely zero logs.</p>
+ <p>Once a day, if it can reach the internet, it checks whether any of its parts
+  have a known security problem or a newer version. That check sends out only
+  the names and version numbers of its own parts, never your text or documents,
+  and it never installs anything by itself. To switch it off, start Redogtor with
+  <code>REDACTOR_NO_CHECKS=1</code>.</p>
 
  <h3>How to Check My Work</h3>
  <p>You don't have to take my word for it. All my code is public at
@@ -1053,6 +1277,23 @@ $("run").onclick=function(){
 if(window.CANQUIT){
   $("quit").classList.remove("hidden");
 }
+/* Security and update check: on your own computer only, never on the website. */
+function showChecks(){
+  fetch("/status").then(function(r){return r.ok?r.json():null}).then(function(c){
+    if(!c||c.state==="all clear"||c.state==="not run yet")return;
+    var bits=[];
+    if(c.security&&c.security.length){bits.push("<b>Security fix needed:</b> "+c.security.map(function(v){
+      return esc(v.package+" "+v.version)+" (<a href=\""+esc(v.link)+"\" target=\"_blank\" rel=\"noreferrer noopener\">"+esc(v.id)+"</a>"
+        +(v.fixed_in&&v.fixed_in.length?", fixed in "+esc(v.fixed_in.join(", ")):"")+")"}).join("; ")+".")}
+    if(c.updates&&c.updates.length){bits.push("<b>Updates available:</b> "+c.updates.map(function(u){
+      return esc(u.package+" "+u.installed+" \u2192 "+u.latest)}).join(", ")+".")}
+    if(c.model&&c.model.newer){bits.push("<b>Newer name-finding model:</b> "+esc(c.model.model+" "+c.model.newest_for_your_spacy)+".")}
+    if(c.problems&&c.problems.length){bits.push("<b>Could not fully check:</b> "+esc(c.problems.join(" ")))}
+    bits.push("Nothing is installed for you. See \u201cKeeping Redogtor up to date\u201d in the README.");
+    $("checknote").innerHTML=bits.join("<br>");$("checknote").classList.remove("hidden");
+  }).catch(function(){});
+}
+if(window.DESKTOP){showChecks();setTimeout(showChecks,45000);setInterval(showChecks,600000);}
 /* One disclaimer or the other, never both. */
 $(window.DESKTOP ? "about-local" : "about-web").classList.remove("hidden");
 $("quit").onclick=function(){
@@ -1218,11 +1459,36 @@ def robots():
 
 @app.route("/health")
 def health():
-    return jsonify({"ok": True, "api": API_VERSION, "model": MODEL, "default": API_DEFAULT})
+    answer = {"ok": True}
+    if API_ON and from_here(API_FROM):     # programs allowed to use the API (Leftward) see its details
+        answer.update(api=API_VERSION, model=MODEL, default=API_DEFAULT)
+    return jsonify(answer)
+
+
+@app.route("/status")
+def status():
+    """The security and update check, plus API details. This machine only, never through the website."""
+    if not from_here("127.0.0.1,::1"):
+        return Response(status=404)
+    return jsonify({"checks_on": CHECKS_ON, "api_on": API_ON, "api": API_VERSION, "model": MODEL,
+                    "api_default": API_DEFAULT, **CHECKS})
+
+
+@app.route("/status/check", methods=["POST"])
+def status_check():
+    """Run the check now. This machine only."""
+    if not from_here("127.0.0.1,::1"):
+        return Response(status=404)
+    if not CHECKS_ON:
+        return jsonify({"error": "Checks are switched off (REDACTOR_NO_CHECKS=1)."}), 400
+    run_checks()
+    return status()
 
 
 if __name__ == "__main__":
     from waitress import serve
+
+    start_checks()
 
     host = os.environ.get("REDACTOR_HOST", "127.0.0.1" if DESKTOP else "0.0.0.0")
     if DESKTOP:

@@ -1,0 +1,24 @@
+# Dependabot: GitHub's free checker. Every Monday it looks for security holes and newer versions and opens a
+# suggested change (a pull request) for each group. It never changes anything by itself: you accept or close each one.
+# Test before accepting a spaCy, thinc, Presidio or PyMuPDF jump, since a big version change can change what is caught.
+version: 2
+updates:
+  - package-ecosystem: "pip"          # requirements.txt (the hash-pinned list the Docker image installs)
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      python-packages:
+        patterns: ["*"]
+  - package-ecosystem: "docker"       # the Python base image in the Dockerfile
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+  - package-ecosystem: "github-actions"   # the build workflow's actions
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
